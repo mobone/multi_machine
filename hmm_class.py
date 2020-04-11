@@ -17,6 +17,7 @@ from itertools import product
 import sqlite3
 from itertools import combinations
 from random import shuffle, randint
+from redis import Queue
 warnings.simplefilter('ignore')
 
 
@@ -176,17 +177,68 @@ def runner(params):
     shuffle(feature_choices)
     features = [starting_feature]
     while len(features)<16:
-    
+        q = Queue(connection=Redis( host='192.168.1.127' ))
+        jobs = []
         for new_feature in feature_choices:
 
             test_features = features + [new_feature]
             
             print(test_features)
             
-            #q = Queue(connection=Redis( host='192.168.1.127' ))
-            name = namegenerator.gen()
             
-            test_with_states, models_used, num_models_used = generate_model(test_features, n_subsets, n_components, lookback, name)
+            name = namegenerator.gen()
+
+            job_id = name+'__'+str(test_features)
+
+            job = q.enqueue(generate_model, args = (test_features, n_subsets, n_components, lookback, name) )
+            jobs.append( (job, job_id) )
+
+        
+        start_time = time.time()
+        
+        results_df = pd.DataFrame()
+        
+        while True:
+            
+            for job, job_id in jobs:
+                features = job_id.split('__')[1]
+                if job.result is None:
+                    sharpe_ratio = None
+                else:    
+                    """
+                    sharpe_ratio = job.result[4]
+                    if sharpe_ratio > best_sharpe_ratio:
+                        best_sharpe_ratio = sharpe_ratio
+                        best_features = features
+                        best_job_results = [job.result[1], job.result[2], job.result[3]]
+                    """
+                    test_with_states, models_used, num_models_used = job.result
+                    backtest_results = get_backtest(test_with_states, test_features, params, models_used, num_models_used, name=name, show_plot=False)
+                    print(backtest_results)
+                    sharpe_ratio = float(backtest_results['sharpe_ratio'])
+                    results_df.loc[features, sharpe_ratio]
+
+
+                #results_df.append( [name, features, sharpe_ratio] )
+            print(results_df)
+            sleep(5)            
+            #results_df = pd.DataFrame(results_df, columns = ['name', 'features', 'sharpe_ratio'])
+
+            #print(results_df)
+            #print(  len(results_df.dropna()) / float(len(results_df)) )
+            
+            """
+            if len(results_df[results_df['sharpe_ratio'].isnull()]):
+                print('not complete. sleeping')
+                sleep(5)
+            else:
+                break
+
+            if (time.time() - start_time) > 1800: # break after thirty minutes
+                print('results not found in enough time. breaking')
+                break
+
+            #test_with_states, models_used, num_models_used = generate_model(test_features, n_subsets, n_components, lookback, name)
             print(test_with_states)
             backtest_results = get_backtest(test_with_states, test_features, params, models_used, num_models_used, name=name, show_plot=False)
             plot(test_with_states, name=name, show=False)
@@ -194,6 +246,8 @@ def runner(params):
             print(backtest_results)
             
             backtest_results.to_sql('results', conn, if_exists='append')
+            """
+
 
 
 
