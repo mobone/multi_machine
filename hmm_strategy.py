@@ -33,7 +33,7 @@ class AccuracyStrat(strategy.BacktestingStrategy):
         
         self.states_instrument = states_instrument
         #print('got states instrument', states_instrument)
-        
+        #print(list(feed['SPY'].getCloseDataSeries()))
         #self.__my_indicator = ma.SMA(feed[states_instrument].getExtraDataSeries('State'), smaPeriod)
         self.__my_indicator = ma.SMA(feed[states_instrument].getCloseDataSeries(), smaPeriod)
 
@@ -87,6 +87,7 @@ class AccuracyStrat(strategy.BacktestingStrategy):
         #bar = bars.getBar('QQQ')
         #print('bar', bar)
         for instrument in self.instruments:
+            
             bar = bars.getBar(instrument)
             close = bar.getClose()
             
@@ -139,6 +140,7 @@ def setup_strategy(files, name, show_plot=False):
             feed.addBarsFromCSV(sym, filename)
         else:
             feed.addBarsFromCSV('states', filename)
+            
     
     
     
@@ -219,9 +221,12 @@ def setup_strategy(files, name, show_plot=False):
         results['max_profit_%'] = returns.max() * 100
         results['min_profit_%'] = returns.min() * 100
 
-        os.remove('./predictions/%s.csv' % name)
+        for sym, filename in files:
+            os.remove(filename)
+
+        
     except Exception as e:
-        #print('backtest exception', e)
+        print('backtest exception', e)
         pass
     results = pd.DataFrame.from_dict(results, orient='index')
     #print(results)

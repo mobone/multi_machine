@@ -11,10 +11,44 @@ import warnings
 from multiprocessing import Pool, cpu_count
 from utils import get_data, plot
 from hmm_strategy import setup_strategy
+from sklearn.ensemble import ExtraTreesRegressor
 import io
+from itertools import product
+import sqlite3
+from itertools import combinations
+from random import shuffle, randint
 warnings.simplefilter('ignore')
 
+
+def run_decision_tree(train):
+    test_cols = list(train.columns.drop(['date','open', 'high', 'low', 'close', 'return', 'next_return']))
+    # get features
+    clf = ExtraTreesRegressor(n_estimators=150)
+    clf = clf.fit(train[test_cols], train['return'])
+    df = pd.DataFrame([test_cols, clf.feature_importances_]).T
+    df.columns = ['feature', 'importances']
+    
+    df = df.sort_values(by='importances')
+    
+    feature_choices = df['feature'].tail(40).values
+    top_starting_features = list(df.sort_values(by='importances').tail(10)['feature'].values)
+    return feature_choices, top_starting_features
+
+
+history_df = get_data('SPY', period='3y')
+
+train = history_df.loc[history_df['date']<'2019-01-01']
+test = history_df.loc[history_df['date']>'2019-01-01']
+
+train.to_csv('./datasets/train.csv', index=False)
+test.to_csv('./datasets/test.csv', index=False)
+
+feature_choices, top_starting_features = run_decision_tree(train)
+top_starting_features = ['intraday_change']
+
+
 def generate_model(features, n_subsets, n_components, lookback, name):
+    
     train = pd.read_csv('./datasets/train.csv')
     test = pd.read_csv('./datasets/test.csv')
 
@@ -89,22 +123,21 @@ def generate_model(features, n_subsets, n_components, lookback, name):
 
 
 
-def get_backtest(test, show_plot=False):
+def get_backtest(test, features, params, models_used, num_models_used, name=None, show_plot=False):
     import dateutil.parser
+
+    starting_feature, n_subsets, n_components, lookback = params
 
     symbols = ['SPY', 'SSO', 'UPRO']
     files = []
     for symbol in symbols:
-        filename = './datasets/%s.csv' % symbol
-        try:
-            df = pd.read_csv(filename)
-            
-        except:
-            df = yfinance.Ticker(symbol).history(period='10y', auto_adjust=False).reset_index()
+        filename = './datasets/%s_%s.csv' % (symbol, name)
+        
+        df = yfinance.Ticker(symbol).history(period='10y', auto_adjust=False).reset_index()
             
             
-            df = df[df['Date']>=test['date'].head(1).values[0]]
-            df.to_csv(filename, index=False)
+        df = df[df['Date']>=test['date'].head(1).values[0]]
+        df.to_csv(filename, index=False)
 
         files.append( (symbol, filename) )
     
@@ -118,39 +151,73 @@ def get_backtest(test, show_plot=False):
     
     files.append( (name, './predictions/%s.csv'% name) )
         
-    backtest_results = setup_strategy(files, name, show_plot=show_plot)
-    print(backtest_results)
-    print(type(backtest_results))
-    backtest_results['avg_per_day'] = backtest_results.loc['cum_returns'] / float(len(test))
+    backtest_results = setup_strategy(files, name, show_plot=show_plot).T
+    
+    backtest_results['avg_per_day'] = float(backtest_results['cum_returns']) / float(len(test))
+    backtest_results['models_used'] = models_used
+    backtest_results['num_models_used'] = num_models_used
     backtest_results['name'] = name
+    backtest_results['features'] = starting_feature
     backtest_results['features'] = str(features)
     backtest_results['num_features'] = len(features)
+    
     backtest_results['n_subsets'] = n_subsets
     backtest_results['n_components'] = n_components
     backtest_results['lookback'] = lookback
 
     return backtest_results
+
+
+def runner(params):
+    print('starting process!')
+    conn =  sqlite3.connect('results.db')
+    print(params)
+    starting_feature, n_subsets, n_components, lookback = params
+    shuffle(feature_choices)
+    features = [starting_feature]
+    while len(features)<16:
     
+        for new_feature in feature_choices:
+
+            test_features = features + [new_feature]
+            
+            print(test_features)
+            
+            #q = Queue(connection=Redis( host='192.168.1.127' ))
+            name = namegenerator.gen()
+            
+            test_with_states, models_used, num_models_used = generate_model(test_features, n_subsets, n_components, lookback, name)
+            print(test_with_states)
+            backtest_results = get_backtest(test_with_states, test_features, params, models_used, num_models_used, name=name, show_plot=False)
+            plot(test_with_states, name=name, show=False)
+            print(test_features)
+            print(backtest_results)
+            
+            backtest_results.to_sql('results', conn, if_exists='append')
+
+
+
+
 if __name__ == '__main__':
 
-    history_df = get_data('SPY', period='3y')
-
-    train = history_df.loc[history_df['date']<'2019-01-01']
-    test = history_df.loc[history_df['date']>'2019-01-01']
-
-    train.to_csv('./datasets/train.csv', index=False)
-    test.to_csv('./datasets/test.csv', index=False)
     
-    n_subsets = 10
-    n_components = 4
-    lookback = 100
-    features = ['return', 'rsi', 'mom']
-    name = namegenerator.gen()
+    
 
-    test_with_states, models_used, num_models_used = generate_model(features, n_subsets, n_components, lookback, name)
+    n_subsets = [5,10,15]
+    n_components = [4]
+    lookback = [50,100,150,200]
 
-    backtest_results = get_backtest(test_with_states, show_plot=False)
-    states_plot = plot(test_with_states, name=name, show=False)
+    #features = ['return', 'rsi', 'mom']
+
+    params = list(product( top_starting_features, n_subsets, n_components, lookback ))
+    shuffle(params)
+
+    
+    #p = Pool(1)
+    #p.map(runner, params)
+    #runner(features, n_subsets, n_components, lookback)
+    runner(params[1])
+    
     """                                    
     pipe_pca.fit(train.loc[:,['return', 'rsi', 'mom']])
 
