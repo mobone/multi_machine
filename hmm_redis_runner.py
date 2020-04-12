@@ -17,8 +17,10 @@ from itertools import product
 import sqlite3
 from itertools import combinations
 from random import shuffle, randint
-from rq import Queue
+from rq import Queue, Connection
 from redis import Redis
+from hmm_class import generate_model
+import time
 warnings.simplefilter('ignore')
 
 
@@ -37,91 +39,15 @@ def run_decision_tree(train):
     return feature_choices, top_starting_features
 
 
-history_df = get_data('SPY', period='3y')
+history_df = get_data('SPY', period='15y')
 
-train = history_df.loc[history_df['date']<'2019-01-01']
-test = history_df.loc[history_df['date']>'2019-01-01']
+train = history_df.loc[history_df['date']<'2015-01-01']
+test = history_df.loc[history_df['date']>'2015-01-01']
 
 train.to_csv('./datasets/train.csv', index=False)
 test.to_csv('./datasets/test.csv', index=False)
 
 feature_choices, top_starting_features = run_decision_tree(train)
-top_starting_features = ['intraday_change']
-
-
-def generate_model(features, n_subsets, n_components, lookback, name):
-    
-    train = pd.read_csv('./datasets/train.csv')
-    test = pd.read_csv('./datasets/test.csv')
-
-    train['date'] = pd.to_datetime(train['date'])
-    test['date'] = pd.to_datetime(test['date'])
-    def get_trained_pipelines(train):
-        train_dfs = np.array_split(train, n_subsets)
-        int_name = 0
-        pipelines = []
-        for train_subset in train_dfs:
-            try:
-                pipe_pca = make_pipeline(StandardScaler(),
-                            PrincipalComponentAnalysis(n_components=n_components),
-                            GMMHMM(n_components=n_components, covariance_type='full', n_iter=150, random_state=7),
-                            )
-                pipe_pca.fit(train_subset[ features ])
-                train['state'] = pipe_pca.predict(train[ features ])
-                results = pd.DataFrame(train.groupby(by=['state'])['return'].mean().sort_values())
-                results['new_state'] = list(range(n_components))
-                results.columns = ['mean', 'new_state']
-                results = results.reset_index()
-                results['name'] = int_name
-                int_name = int_name + 1
-                pipelines.append( [pipe_pca, results] )
-            except Exception as e:
-                #print('make trained pipelines exception', e)
-                pass
-        
-        return pipelines
-
-
-    def run_pipeline(pipelines, test):
-        for i in range(lookback,len(test)):
-            this_test = test.iloc[ i - lookback : i]
-            today = this_test[-1:]
-            max_score = -np.inf
-            for pipeline, train_results in pipelines:
-                try:
-                    test_score = np.exp( pipeline.score( this_test[ features ]) / len(this_test) ) * 100
-                    if test_score>max_score:
-                        state = pipeline.predict( this_test[ features ] )[-1:][0]
-                        state = int(train_results[train_results['state']==state]['new_state'])
-                        test.loc[today.index, 'state'] = state
-                        test.loc[today.index, 'model_used'] = train_results['name'].values[0]
-                        max_score = test_score
-                except Exception as e:
-                    #print('this exception', e)
-                    continue
-        
-        test = test.dropna(subset=['state'])
-        models_used = str(test['model_used'].unique())
-        num_models_used = len(test['model_used'].unique())
-
-        return test, models_used, num_models_used
-
-
-
-    pipelines = get_trained_pipelines(train)
-
-    test, models_used, num_models_used = run_pipeline(pipelines, test)
-
-    #backtest_results, backtest_plot get_backtest(test)
-
-    #print(test.groupby(by='state')['return'].mean())
-    #print(test.groupby(by='state')['next_return'].mean())
-    #print(test.groupby(by='state')['next_return'].std())
-    
-    #states_plot = plot(test, name=name, show=False)
-
-    return test, models_used, num_models_used
-
 
 
 
@@ -169,6 +95,19 @@ def get_backtest(test, features, params, models_used, num_models_used, name=None
 
     return backtest_results
 
+def get_redis_connection():
+    
+    while True:
+        try:
+            #q = Queue(is_async=False, connection=Redis( host='192.168.1.127' ))
+            q = Queue(connection=Redis( host='192.168.1.127' ))
+            break
+        except Exception as e:
+            print('redis connection issue', e)
+            sleep(60)
+
+            
+    return q
 
 def runner(params):
     print('starting process!')
@@ -177,10 +116,20 @@ def runner(params):
     starting_feature, n_subsets, n_components, lookback = params
     shuffle(feature_choices)
     features = [starting_feature]
+    
+
     while len(features)<16:
         q = Queue(connection=Redis( host='192.168.1.127' ))
+        results_df = pd.DataFrame()
+        
         jobs = []
+        num_jobs = 0
+
+        
+            
         for new_feature in feature_choices:
+            if new_feature in features:
+                continue
 
             test_features = features + [new_feature]
             
@@ -189,46 +138,69 @@ def runner(params):
             
             name = namegenerator.gen()
 
-            job_id = name+'__'+str(test_features)
-
+            job_name = name+'__'+str(test_features)
+            results_df = results_df.append( [ [str(test_features), None, None] ] )
+            
+            
+            print('creating job', job_name)
             job = q.enqueue(generate_model, args = (test_features, n_subsets, n_components, lookback, name, ), job_timeout=3600,  result_ttl=86400 )
-            jobs.append( (job, job_id) )
-
+            
+            jobs.append( (job, job_name) )
+            
+            num_jobs = num_jobs + 1
+            if num_jobs>5:
+                break
+        
+        results_df.columns = ['features', 'sharpe_ratio', 'cum_returns']
         
         start_time = time.time()
         
-        results_df = pd.DataFrame()
-        
+        sleep(5)
+        best_sharpe_ratio = -np.inf
         while True:
             
-            for job, job_id in jobs:
-                features = job_id.split('__')[1]
-                if job.result is None:
-                    sharpe_ratio = None
-                else:    
-                    """
-                    sharpe_ratio = job.result[4]
+                
+            for job, job_name in jobs:
+                features = job_name.split('__')[1]
+                try:
+                    if job.result is None:
+                        continue
+                    
+                    if  results_df.loc[results_df['features']==str(features), 'sharpe_ratio'].values[0] != None:
+                        continue
+                    
+                    
+                    
+                    
+                    test_with_states, models_used, num_models_used = job.result
+                    
+                    print('running backtest')
+                    backtest_results = get_backtest(test_with_states, features, params, models_used, num_models_used, name=name, show_plot=False)
+                    plot(test_with_states, name=name, show=False)
+
+                    print(backtest_results)
+                    backtest_results.to_sql('results', conn, if_exists='append')
+
+
+                    sharpe_ratio = float(backtest_results['sharpe_ratio'])
+                    cum_returns = float(backtest_results['cum_returns'])
+                    results_df.loc[results_df['features']==str(features), 'sharpe_ratio'] = sharpe_ratio
+                    results_df.loc[results_df['features']==str(features), 'cum_returns'] = cum_returns
+
                     if sharpe_ratio > best_sharpe_ratio:
                         best_sharpe_ratio = sharpe_ratio
                         best_features = features
-                        best_job_results = [job.result[1], job.result[2], job.result[3]]
-                    """
-                    test_with_states, models_used, num_models_used = job.result
-                    backtest_results = get_backtest(test_with_states, test_features, params, models_used, num_models_used, name=name, show_plot=False)
-                    print(backtest_results)
-                    sharpe_ratio = float(backtest_results['sharpe_ratio'])
-                    results_df.loc[features, sharpe_ratio]
+                        
 
+                except Exception as e:
+                    print('EXCEPTION')
+                    print(e)        
+                    print()            
+                    #q = get_redis_connection()
 
-                #results_df.append( [name, features, sharpe_ratio] )
             print(results_df)
-            sleep(5)            
-            #results_df = pd.DataFrame(results_df, columns = ['name', 'features', 'sharpe_ratio'])
-
-            #print(results_df)
-            #print(  len(results_df.dropna()) / float(len(results_df)) )
             
-            """
+            
             if len(results_df[results_df['sharpe_ratio'].isnull()]):
                 print('not complete. sleeping')
                 sleep(5)
@@ -238,18 +210,8 @@ def runner(params):
             if (time.time() - start_time) > 1800: # break after thirty minutes
                 print('results not found in enough time. breaking')
                 break
-
-            #test_with_states, models_used, num_models_used = generate_model(test_features, n_subsets, n_components, lookback, name)
-            print(test_with_states)
-            backtest_results = get_backtest(test_with_states, test_features, params, models_used, num_models_used, name=name, show_plot=False)
-            plot(test_with_states, name=name, show=False)
-            print(test_features)
-            print(backtest_results)
-            
-            backtest_results.to_sql('results', conn, if_exists='append')
-            """
-
-
+        print('found best features', best_features, type(best_features))
+        features = eval(best_features)
 
 
 
