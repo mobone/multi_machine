@@ -21,21 +21,32 @@ from rq import Queue, Connection
 from redis import Redis
 from hmm_class import generate_model
 import time
+import hashlib
+
 warnings.simplefilter('ignore')
 
 
 def run_decision_tree(train):
     test_cols = list(train.columns.drop(['date','open', 'high', 'low', 'close', 'return', 'next_return']))
     # get features
-    clf = ExtraTreesRegressor(n_estimators=150)
+    clf = ExtraTreesRegressor(n_estimators=150, random_state=42)
     clf = clf.fit(train[test_cols], train['return'])
     df = pd.DataFrame([test_cols, clf.feature_importances_]).T
     df.columns = ['feature', 'importances']
     
     df = df.sort_values(by='importances')
     
-    feature_choices = df['feature'].tail(40).values
-    top_starting_features = list(df.sort_values(by='importances').tail(10)['feature'].values)
+    feature_choices = list(df['feature'].tail(45).values)
+
+    preset_features = ['aroon_up', 'aroon_down', 'aroonosc','correl', 'mom', 'beta', 'rsi', 'bop', 
+                        'ultimate_oscillator', 'bbands_upper', 'bbands_middle', 'bbands_lower', 
+                        'bbands_upper_p', 'bbands_middle_p', 'bbands_lower_p', 'stochf_fastk', 'stochf_fastd', 'stochrsi_fastk', 'stochrsi_fastd' ]
+
+    feature_choices = list(set( feature_choices + preset_features ))
+    print('number of feature choices')
+    print(len(feature_choices))
+    
+    top_starting_features = list(df.sort_values(by='importances').tail(5)['feature'].values)[::-1]
     return feature_choices, top_starting_features
 
 
@@ -50,8 +61,7 @@ test.to_csv('./datasets/test.csv', index=False)
 feature_choices, top_starting_features = run_decision_tree(train)
 
 
-
-def get_backtest(test, features, params, models_used, num_models_used, name=None, show_plot=False):
+def get_backtest(test, feature_hash, features, params, models_used, num_models_used, name=None, show_plot=False):
     import dateutil.parser
 
     starting_feature, n_subsets, n_components, lookback = params
@@ -85,13 +95,14 @@ def get_backtest(test, features, params, models_used, num_models_used, name=None
     backtest_results['models_used'] = models_used
     backtest_results['num_models_used'] = num_models_used
     backtest_results['name'] = name
-    backtest_results['features'] = starting_feature
+    backtest_results['start_feature'] = starting_feature
     backtest_results['features'] = str(features)
-    backtest_results['num_features'] = len(features)
+    backtest_results['num_features'] = len(eval(features))
     
     backtest_results['n_subsets'] = n_subsets
     backtest_results['n_components'] = n_components
     backtest_results['lookback'] = lookback
+    backtest_results['feature_hash'] = feature_hash
 
     return backtest_results
 
@@ -110,6 +121,8 @@ def get_redis_connection():
     return q
 
 def runner(params):
+
+    #sleep(randint(0,60))
     print('starting process!')
     conn =  sqlite3.connect('results.db')
     print(params)
@@ -123,35 +136,49 @@ def runner(params):
         results_df = pd.DataFrame()
         
         jobs = []
-        num_jobs = 0
-
-        
-            
+                    
         for new_feature in feature_choices:
             if new_feature in features:
                 continue
 
             test_features = features + [new_feature]
             
-            print(test_features)
+            test_features.sort()
             
+            feature_hash = str(params)+'_'+str(test_features)
             
-            name = namegenerator.gen()
+            feature_hash = hashlib.md5(feature_hash.encode()).hexdigest()
+            
+            try:
+                sql = 'select * from results where feature_hash=="%s"' % feature_hash
+                already_found_df = pd.read_sql(sql, conn)
+            except Exception as e:
+                print(e)
+                already_found_df = pd.DataFrame()
 
-            job_name = name+'__'+str(test_features)
-            results_df = results_df.append( [ [str(test_features), None, None] ] )
-            
-            
-            print('creating job', job_name)
-            job = q.enqueue(generate_model, args = (test_features, n_subsets, n_components, lookback, name, ), job_timeout=3600,  result_ttl=86400 )
-            
-            jobs.append( (job, job_name) )
-            
-            num_jobs = num_jobs + 1
-            if num_jobs>5:
-                break
+            if already_found_df.empty:
+                
         
-        results_df.columns = ['features', 'sharpe_ratio', 'cum_returns']
+        
+                name = namegenerator.gen()
+
+                job_name = name+'__'+str(test_features)+'__'+feature_hash
+                results_df = results_df.append( [ [str(test_features), feature_hash, None, None] ] )
+                
+                print('creating job', job_name)
+                job = q.enqueue(generate_model, args = (test_features, n_subsets, n_components, lookback, name, ), job_timeout=3600,  result_ttl=86400 )
+                
+                jobs.append( (job, job_name) )
+            else:
+                print('job already found')
+                sharpe_ratio = float(already_found_df['sharpe_ratio'])
+                cum_returns = float(already_found_df['cum_returns'])
+                results_df = results_df.append( [ [str(test_features), feature_hash, sharpe_ratio, cum_returns] ] )
+            
+
+            
+        
+        results_df.columns = ['features', 'feature_hash', 'sharpe_ratio', 'cum_returns']
         
         start_time = time.time()
         
@@ -161,7 +188,7 @@ def runner(params):
             
                 
             for job, job_name in jobs:
-                features = job_name.split('__')[1]
+                name, features, feature_hash = job_name.split('__')
                 try:
                     if job.result is None:
                         continue
@@ -174,11 +201,12 @@ def runner(params):
                     
                     test_with_states, models_used, num_models_used = job.result
                     
-                    print('running backtest')
-                    backtest_results = get_backtest(test_with_states, features, params, models_used, num_models_used, name=name, show_plot=False)
-                    plot(test_with_states, name=name, show=False)
+                    
+                    backtest_results = get_backtest(test_with_states, feature_hash, features, params, models_used, num_models_used, name=name, show_plot=False)
+                    
 
                     print(backtest_results)
+                    
                     backtest_results.to_sql('results', conn, if_exists='append')
 
 
@@ -188,6 +216,7 @@ def runner(params):
                     results_df.loc[results_df['features']==str(features), 'cum_returns'] = cum_returns
 
                     if sharpe_ratio > best_sharpe_ratio:
+                        plot(test_with_states, name=name, show=False)
                         best_sharpe_ratio = sharpe_ratio
                         best_features = features
                         
@@ -199,15 +228,15 @@ def runner(params):
                     #q = get_redis_connection()
 
             print(results_df)
-            
+            print(len(results_df))
             
             if len(results_df[results_df['sharpe_ratio'].isnull()]):
                 print('not complete. sleeping')
-                sleep(5)
+                sleep(randint(5,25))
             else:
                 break
 
-            if (time.time() - start_time) > 1800: # break after thirty minutes
+            if (time.time() - start_time) > 1800: # break after 30 minutes
                 print('results not found in enough time. breaking')
                 break
         print('found best features', best_features, type(best_features))
@@ -230,10 +259,10 @@ if __name__ == '__main__':
     shuffle(params)
 
     
-    #p = Pool(1)
-    #p.map(runner, params)
+    p = Pool(8)
+    p.map(runner, params)
     #runner(features, n_subsets, n_components, lookback)
-    runner(params[1])
+    #runner(params[1])
     
     """                                    
     pipe_pca.fit(train.loc[:,['return', 'rsi', 'mom']])

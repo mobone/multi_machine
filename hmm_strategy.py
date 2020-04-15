@@ -189,12 +189,13 @@ def setup_strategy(files, name, show_plot=False):
     fig = matplotlib.pyplot.gcf()
     fig.set_size_inches(10, 5)
         
+    cum_returns = retAnalyzer.getCumulativeReturns()[-1] * 100
     results = {}
     results['final_value'] = myStrategy.getResult()
-    results['cum_returns'] = retAnalyzer.getCumulativeReturns()[-1] * 100
+    results['cum_returns'] = cum_returns
 
-    if not show_plot:
-        plt.savePlot('./plots/%s_%s.png' % ( str(int(results['cum_returns'])), name ))
+    if not show_plot and cum_returns>150:
+        plt.savePlot('./backtest_plots/%s_%s.png' % ( str(int(results['cum_returns'])), name ))
     
     
     del plt

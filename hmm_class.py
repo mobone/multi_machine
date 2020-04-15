@@ -60,6 +60,8 @@ def generate_model(features, n_subsets, n_components, lookback, name):
             today = this_test[-1:]
             max_score = -np.inf
             for pipeline, train_results in pipelines:
+                test.loc[today.index, 'state'] = 0
+                test.loc[today.index, 'model_used'] = 'None'
                 try:
                     test_score = np.exp( pipeline.score( this_test[ features ]) / len(this_test) ) * 100
                     if test_score>max_score:
