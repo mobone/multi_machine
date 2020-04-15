@@ -215,7 +215,7 @@ def runner(params):
                     results_df.loc[results_df['features']==str(features), 'sharpe_ratio'] = sharpe_ratio
                     results_df.loc[results_df['features']==str(features), 'cum_returns'] = cum_returns
 
-                    if sharpe_ratio > best_sharpe_ratio:
+                    if sharpe_ratio > best_sharpe_ratio and sharpe_ratio>1:
                         plot(test_with_states, name=name, show=False)
                         best_sharpe_ratio = sharpe_ratio
                         best_features = features

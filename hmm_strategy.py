@@ -190,16 +190,17 @@ def setup_strategy(files, name, show_plot=False):
     fig.set_size_inches(10, 5)
         
     cum_returns = retAnalyzer.getCumulativeReturns()[-1] * 100
+    sharpe_ratio = sharpeRatioAnalyzer.getSharpeRatio(0.05)
     results = {}
     results['final_value'] = myStrategy.getResult()
     results['cum_returns'] = cum_returns
-
-    if not show_plot and cum_returns>150:
+    results['sharpe_ratio'] = sharpe_ratio
+    if not show_plot and sharpe_ratio>1 and cum_returns>200:
         plt.savePlot('./backtest_plots/%s_%s.png' % ( str(int(results['cum_returns'])), name ))
     
     
     del plt
-    results['sharpe_ratio'] = sharpeRatioAnalyzer.getSharpeRatio(0.05)
+    
     results['max_drawdown_%'] = drawDownAnalyzer.getMaxDrawDown() * 100
     results['longest_drawdown'] = str(drawDownAnalyzer.getLongestDrawDownDuration())
 
