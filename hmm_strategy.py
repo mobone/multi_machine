@@ -228,7 +228,7 @@ def setup_strategy(files, name, show_plot=False):
 
         
     except Exception as e:
-        print('backtest exception', e)
+        #print('backtest exception', e)
         pass
     results = pd.DataFrame.from_dict(results, orient='index')
     #print(results)

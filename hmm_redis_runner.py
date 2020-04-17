@@ -19,6 +19,7 @@ from itertools import combinations
 from random import shuffle, randint
 from rq import Queue, Connection
 from redis import Redis
+from rq.job import Job
 from hmm_class import generate_model
 import time
 import hashlib
@@ -46,7 +47,7 @@ def run_decision_tree(train):
     print('number of feature choices')
     print(len(feature_choices))
     
-    top_starting_features = list(df.sort_values(by='importances').tail(5)['feature'].values)[::-1]
+    top_starting_features = list(df.sort_values(by='importances').tail(15)['feature'].values)[::-1]
     return feature_choices, top_starting_features
 
 
@@ -106,23 +107,11 @@ def get_backtest(test, feature_hash, features, params, models_used, num_models_u
 
     return backtest_results
 
-def get_redis_connection():
-    
-    while True:
-        try:
-            #q = Queue(is_async=False, connection=Redis( host='192.168.1.127' ))
-            q = Queue(connection=Redis( host='192.168.1.127' ))
-            break
-        except Exception as e:
-            print('redis connection issue', e)
-            sleep(60)
-
-            
-    return q
 
 def runner(params):
-
-    #sleep(randint(0,60))
+    sleep_time = randint(0,30)
+    print('sleeping for %s seconds before starting' % sleep_time)
+    sleep(sleep_time)
     print('starting process!')
     conn =  sqlite3.connect('results.db')
     print(params)
@@ -132,11 +121,11 @@ def runner(params):
     
 
     while len(features)<16:
-        q = Queue(connection=Redis( host='192.168.1.127' ))
+        
         results_df = pd.DataFrame()
         
         jobs = []
-                    
+        q = Queue(connection=Redis( host='192.168.1.127' ))            
         for new_feature in feature_choices:
             if new_feature in features:
                 continue
@@ -165,12 +154,17 @@ def runner(params):
                 job_name = name+'__'+str(test_features)+'__'+feature_hash
                 results_df = results_df.append( [ [str(test_features), feature_hash, None, None] ] )
                 
-                print('creating job', job_name)
-                job = q.enqueue(generate_model, args = (test_features, n_subsets, n_components, lookback, name, ), job_timeout=3600,  result_ttl=86400 )
+                #print('creating job', job_name)
                 
-                jobs.append( (job, job_name) )
+                print('creating job', feature_hash)
+                job = q.enqueue(generate_model, args = (test_features, n_subsets, n_components, lookback, name, ), job_timeout='12h',  result_ttl=86400 )
+                #job = Job.create(generate_model, id=feature_hash, args = (test_features, n_subsets, n_components, lookback, name, ), timeout='12h',  result_ttl=86400 )
+                #q.enqueue(job)
+                #sleep(.25)
+                
+                jobs.append( (job.id, job_name) )
             else:
-                print('job already found')
+                #print('job already found')
                 sharpe_ratio = float(already_found_df['sharpe_ratio'])
                 cum_returns = float(already_found_df['cum_returns'])
                 results_df = results_df.append( [ [str(test_features), feature_hash, sharpe_ratio, cum_returns] ] )
@@ -179,17 +173,19 @@ def runner(params):
             
         
         results_df.columns = ['features', 'feature_hash', 'sharpe_ratio', 'cum_returns']
-        
+        sleep(5)
         start_time = time.time()
         
-        sleep(5)
+        
         best_sharpe_ratio = -np.inf
         while True:
-            
-                
-            for job, job_name in jobs:
-                name, features, feature_hash = job_name.split('__')
+            redis_con = Redis( host='192.168.1.127' )
+            #q = Queue(connection=redis_con)
+            for job_id, job_name in jobs:
                 try:
+                    name, features, feature_hash = job_name.split('__')
+                    job = Job.fetch(job_id, connection = redis_con)
+                
                     if job.result is None:
                         continue
                     
@@ -205,7 +201,7 @@ def runner(params):
                     backtest_results = get_backtest(test_with_states, feature_hash, features, params, models_used, num_models_used, name=name, show_plot=False)
                     
 
-                    print(backtest_results)
+                    #print(backtest_results)
                     
                     backtest_results.to_sql('results', conn, if_exists='append')
 
@@ -215,8 +211,9 @@ def runner(params):
                     results_df.loc[results_df['features']==str(features), 'sharpe_ratio'] = sharpe_ratio
                     results_df.loc[results_df['features']==str(features), 'cum_returns'] = cum_returns
 
-                    if sharpe_ratio > best_sharpe_ratio and sharpe_ratio>1:
-                        plot(test_with_states, name=name, show=False)
+                    if sharpe_ratio > best_sharpe_ratio:
+                        if sharpe_ratio > 1:
+                            plot(test_with_states, name=name, show=False)
                         best_sharpe_ratio = sharpe_ratio
                         best_features = features
                         
@@ -224,15 +221,20 @@ def runner(params):
                 except Exception as e:
                     print('EXCEPTION')
                     print(e)        
+                    print(backtest_results)
                     print()            
+                    sleep(5)
+                    #redis_con = Redis(host='192.168.1.127')
                     #q = get_redis_connection()
 
             print(results_df)
-            print(len(results_df))
+            #print(len(results_df))
+            print(params, results_df.head(1)['features'].values[0])
+            #print('percent complete  %.2f'.format( 1-(len(results_df[results_df['sharpe_ratio'].isnull()]) / float(len(results_df))) ) )
             
-            if len(results_df[results_df['sharpe_ratio'].isnull()]):
-                print('not complete. sleeping')
-                sleep(randint(5,25))
+            if len(results_df[results_df['sharpe_ratio'].isnull()])>2:
+                #print('not complete. sleeping')
+                sleep(10)
             else:
                 break
 
@@ -259,7 +261,7 @@ if __name__ == '__main__':
     shuffle(params)
 
     
-    p = Pool(8)
+    p = Pool(4)
     p.map(runner, params)
     #runner(features, n_subsets, n_components, lookback)
     #runner(params[1])
