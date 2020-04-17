@@ -190,6 +190,7 @@ def runner(params):
                         continue
                     
                     if  results_df.loc[results_df['features']==str(features), 'sharpe_ratio'].values[0] != None:
+                        print('continueing')
                         continue
                     
                     
@@ -201,16 +202,20 @@ def runner(params):
                     backtest_results = get_backtest(test_with_states, feature_hash, features, params, models_used, num_models_used, name=name, show_plot=False)
                     
 
-                    #print(backtest_results)
+                    print(backtest_results)
                     
-                    backtest_results.to_sql('results', conn, if_exists='append')
 
 
                     sharpe_ratio = float(backtest_results['sharpe_ratio'])
                     cum_returns = float(backtest_results['cum_returns'])
                     results_df.loc[results_df['features']==str(features), 'sharpe_ratio'] = sharpe_ratio
                     results_df.loc[results_df['features']==str(features), 'cum_returns'] = cum_returns
-
+                    print(results_df)
+                    print('here')
+                    print( results_df.loc[results_df['features']==str(features)] )
+                    best_features = results_df[ results_df['sharpe_ratio'] == results_df['sharpe_ratio'].max() ]['features'].values[0]
+                    if 'win_rate' in backtest_results.columns:
+                        backtest_results.to_sql('results', conn, if_exists='append')
                     if sharpe_ratio > best_sharpe_ratio:
                         if sharpe_ratio > 1:
                             plot(test_with_states, name=name, show=False)
@@ -234,7 +239,7 @@ def runner(params):
             
             if len(results_df[results_df['sharpe_ratio'].isnull()])>2:
                 #print('not complete. sleeping')
-                sleep(10)
+                sleep(15)
             else:
                 break
 
@@ -251,7 +256,7 @@ if __name__ == '__main__':
     
     
 
-    n_subsets = [5,10,15]
+    n_subsets = [5,10,15,20,25]
     n_components = [4]
     lookback = [50,100,150,200]
 
@@ -261,7 +266,7 @@ if __name__ == '__main__':
     shuffle(params)
 
     
-    p = Pool(4)
+    p = Pool(8)
     p.map(runner, params)
     #runner(features, n_subsets, n_components, lookback)
     #runner(params[1])
