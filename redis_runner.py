@@ -11,7 +11,7 @@ import warnings
 from multiprocessing import Pool, cpu_count
 from utils import get_data, plot, run_feature_importances, get_backtest
 from hmm_strategy import setup_strategy
-
+from rq.registry import FinishedJobRegistry
 import io
 from itertools import product
 import sqlite3
@@ -24,11 +24,12 @@ from hmm_class import generate_model
 import time
 import hashlib
 
+# TODO: Try using hmm state as input for rfc
 class run_machine():
     def __init__(self, params, feature_choices):
         print('sleeping')
         print(params)
-        sleep(randint(10,60))
+        sleep(randint(0,30))
         print('starting')
         self.params  = params
         starting_feature, n_subsets, n_components, lookback, with_rfc, include_covid = self.params
@@ -40,7 +41,7 @@ class run_machine():
         self.with_rfc = with_rfc
         self.include_covid = include_covid
 
-        self.features = [starting_feature]
+        self.features = ['return', starting_feature]
         self.conn = sqlite3.connect('results.db')
 
         #TODO: cover cases where all states are none
@@ -100,7 +101,7 @@ class run_machine():
                             self.with_rfc, 
                             self.include_covid,
                             name, )
-                job = q.enqueue(generate_model, args = job_args, job_timeout='12h',  result_ttl=86400 )
+                job = q.enqueue(generate_model, args = job_args, job_timeout='6h',  result_ttl=3600 )
                 #TODO: change to nan and check for isnan in redis results
                 self.results = self.results.append( [ [str(test_features),  str(self.params), feature_hash, job.id, np.inf, np.inf, job.get_status()] ] )
                 self.jobs.append( (job.id, job_name) )
@@ -118,7 +119,8 @@ class run_machine():
         best_sharpe_ratio = -np.inf
         while True:
             redis_con = Redis( host='192.168.1.127' )
-
+            #q = Queue(connection=redis_con)
+            #registry = FinishedJobRegistry(queue=q)
             for job_id, job_name in self.jobs:
                 name, features, feature_hash = job_name.split('__')
                 job = Job.fetch(job_id, connection = redis_con)
@@ -148,6 +150,9 @@ class run_machine():
                 #self.results.loc[self.results['features']==str(features), 'job_status'] = job_status
                 
                 best_features = self.results[ self.results['sharpe_ratio'] == self.results['sharpe_ratio'].max() ]['features'].values[0]
+                # remove job
+                #if job_status == 'finished':
+                #    registry.remove(job_id)
                 # todo: store failed jobs
                 if 'win_rate' in backtest_results.columns:
                     backtest_results.to_sql('results', self.conn, if_exists='append')
@@ -207,7 +212,7 @@ if __name__ == '__main__':
     #params = ['mom', feature_choices, 5, 4, 200, True ]
     #run_machine( params )
 
-    #p = Pool(4)
-    #p.map(runner_method, params_with_features)
+    p = Pool(8)
+    p.map(runner_method, params_with_features)
 
-    runner_method(params_with_features[0])
+    #runner_method(params_with_features[0])

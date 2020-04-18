@@ -48,15 +48,18 @@ def generate_model(features, n_subsets, n_components, lookback, with_rfc, includ
         #print('making deicision tree')
         #print(train)
         #print(y_train)
-        
+        rfc_features = list(train.columns)
+        rfc_features.remove('return')
+
         rfc = RandomForestClassifier(n_estimators=50, max_depth=15, random_state=1986)
-        rfc.fit( train, y_train )
+        rfc.fit( train['rfc_features'], y_train )
         return rfc
 
     def get_trained_pipelines(train):
         train_dfs = np.array_split(train, n_subsets)
         int_name = 0
         pipelines = []
+        
         for train_subset in train_dfs:
             try:
                 pipe_pca = make_pipeline(StandardScaler(),
