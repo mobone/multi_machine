@@ -77,14 +77,14 @@ def generate_model(features, n_subsets, n_components, lookback, with_rfc, name):
                 pipelines.append( [pipe_pca, results, rfc] )
                 
             except Exception as e:
-                print('make trained pipelines exception', e)
+                #print('make trained pipelines exception', e)
                 pass
         
         return pipelines
 
 
     def run_pipeline(pipelines, test):
-        #TODO: cover cases where all states are none
+        
         test.loc[:, 'state'] = None
         test.loc[:, 'rfc_state'] = None
         test.loc[:, 'model_used'] = 'None'
@@ -116,7 +116,7 @@ def generate_model(features, n_subsets, n_components, lookback, with_rfc, name):
                         test.loc[today.index, 'model_used'] = train_results['name'].values[0]
                         max_score = test_score
                 except Exception as e:
-                    print('this exception', e)
+                    #print('this exception', e)
                     continue
         
         test = test.dropna(subset=['state'])

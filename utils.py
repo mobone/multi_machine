@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from ta_indicators import get_ta
 from sklearn.ensemble import ExtraTreesRegressor
 import pandas as pd
+from hmm_strategy import setup_strategy
 
 def plot(df, name=None, show=False):
     df.loc[df['state']==0, 'color'] = 'firebrick'
@@ -60,3 +61,52 @@ def run_feature_importances(train, n_total_features=20):
     
     top_starting_features = list(df.sort_values(by='importances').tail(10)['feature'].values)[::-1]
     return feature_choices, top_starting_features
+
+
+
+
+def get_backtest(test, feature_hash, features, params, models_used, num_models_used, name=None, show_plot=False):
+    import dateutil.parser
+
+    starting_feature, n_subsets, n_components, lookback, with_rfc = params
+    
+
+    symbols = ['SPY', 'SSO', 'UPRO']
+    files = []
+    for symbol in symbols:
+        filename = './datasets/%s_%s.csv' % (symbol, name)
+        
+        df = yfinance.Ticker(symbol).history(period='10y', auto_adjust=False).reset_index()
+            
+            
+        df = df[df['Date']>=test['date'].head(1).values[0]]
+        df.to_csv(filename, index=False)
+
+        files.append( (symbol, filename) )
+    
+    test_df = test[ ['date', 'open', 'high', 'low', 'close', 'adj close', 'volume', 'state'] ]
+    test_df.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume', 'State']            
+    test_df['Low'] = test_df['State']
+    test_df['Close'] = test_df['State']
+    
+    test_df.to_csv('./predictions/%s.csv' % name)
+    
+    
+    files.append( (name, './predictions/%s.csv'% name) )
+        
+    backtest_results = setup_strategy(files, name, show_plot=show_plot).T
+    
+    backtest_results['avg_per_day'] = float(backtest_results['cum_returns']) / float(len(test))
+    backtest_results['models_used'] = models_used
+    backtest_results['num_models_used'] = num_models_used
+    backtest_results['name'] = name
+    backtest_results['start_feature'] = starting_feature
+    backtest_results['features'] = str(features)
+    backtest_results['num_features'] = len(eval(features))
+    
+    backtest_results['n_subsets'] = n_subsets
+    backtest_results['n_components'] = n_components
+    backtest_results['lookback'] = lookback
+    backtest_results['feature_hash'] = feature_hash
+
+    return backtest_results
