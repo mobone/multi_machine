@@ -5,6 +5,7 @@ import subprocess
 os.chdir('/home/nick/multi_machine')
 print(os.getcwd())
 cores = multiprocessing.cpu_count()
+# TODO: fix me. doesn't work
 for i in range(int(cores)):
     #os.system('rq worker --url redis://192.168.1.127 &')
     #subprocess.Popen(['rq','worker','--url','redis://192.168.1.127', '>', '/tmp/worker.log', '2>&1'])
