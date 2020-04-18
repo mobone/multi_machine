@@ -1,7 +1,7 @@
 import os
 import multiprocessing
 
-os.system('pkill -9 rq')
+
 os.chdir('/home/nick/multi_machine')
 print(os.getcwd())
 cores = multiprocessing.cpu_count()
