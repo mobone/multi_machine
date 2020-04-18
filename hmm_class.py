@@ -49,10 +49,11 @@ def generate_model(features, n_subsets, n_components, lookback, with_rfc, includ
         #print(train)
         #print(y_train)
         rfc_features = list(train.columns)
-        rfc_features.remove('return')
+        if 'return' in rfc_features:
+            rfc_features.remove('return')
 
         rfc = RandomForestClassifier(n_estimators=50, max_depth=15, random_state=1986)
-        rfc.fit( train['rfc_features'], y_train )
+        rfc.fit( train[rfc_features], y_train )
         return rfc
 
     def get_trained_pipelines(train):
