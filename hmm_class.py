@@ -54,7 +54,7 @@ def generate_model(features, n_subsets, n_components, lookback, with_rfc, includ
 
         rfc = RandomForestClassifier(n_estimators=50, max_depth=15, random_state=1986)
         rfc.fit( train[rfc_features], y_train )
-        return rfc
+        return rfc, rfc_features
 
     def get_trained_pipelines(train):
         train_dfs = np.array_split(train, n_subsets)
@@ -70,9 +70,9 @@ def generate_model(features, n_subsets, n_components, lookback, with_rfc, includ
                 pipe_pca.fit(train_subset[ features ])
 
                 if with_rfc:
-                    rfc = train_decision_tree(train_subset[ features ], train_subset['return_class'])
+                    rfc, rfc_features = train_decision_tree(train_subset[ features ], train_subset['return_class'])
                 else:
-                    rfc = None
+                    rfc, rfc_features = None, None
 
                 train['state'] = pipe_pca.predict(train[ features ])
                 results = pd.DataFrame(train.groupby(by=['state'])['return'].mean().sort_values())
@@ -82,7 +82,7 @@ def generate_model(features, n_subsets, n_components, lookback, with_rfc, includ
                 results['name'] = int_name
                 int_name = int_name + 1
                 
-                pipelines.append( [pipe_pca, results, rfc] )
+                pipelines.append( [pipe_pca, results, rfc, rfc_features] )
                 
             except Exception as e:
                 #print('make trained pipelines exception', e)
@@ -100,7 +100,7 @@ def generate_model(features, n_subsets, n_components, lookback, with_rfc, includ
             this_test = test.iloc[ i - lookback : i]
             today = this_test[-1:]
             max_score = -np.inf
-            for pipeline, train_results, rfc in pipelines:
+            for pipeline, train_results, rfc, rfc_features in pipelines:
                 
                 try:
                     test_score = np.exp( pipeline.score( this_test[ features ]) / len(this_test) ) * 100
@@ -108,7 +108,7 @@ def generate_model(features, n_subsets, n_components, lookback, with_rfc, includ
                     if test_score>max_score:
                         state = pipeline.predict( this_test[ features ] )[-1:][0]
                         if with_rfc:
-                            rfc_state = rfc.predict( this_test[ features ])[-1:][0]
+                            rfc_state = rfc.predict( this_test[ rfc_features ])[-1:][0]
                             test.loc[today.index, 'rfc_state'] = rfc_state
                         
                         state = int(train_results[train_results['state']==state]['new_state'])
