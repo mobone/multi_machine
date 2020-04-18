@@ -22,13 +22,17 @@ from rq import Queue
 from redis import Redis
 warnings.simplefilter('ignore')
 
-def generate_model(features, n_subsets, n_components, lookback, with_rfc, name):
+def generate_model(features, n_subsets, n_components, lookback, with_rfc, include_covid, name):
     
     train = pd.read_csv('./datasets/train.csv')
     test = pd.read_csv('./datasets/test.csv')
 
     train['date'] = pd.to_datetime(train['date'])
     test['date'] = pd.to_datetime(test['date'])
+
+    if include_covid == False:
+        train = train[train['date']<'2020-01-01']
+        test = test[test['date']<'2020-01-01']
 
     # decision tree stuff
     cutoff_divisor = 8

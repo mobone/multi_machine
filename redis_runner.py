@@ -27,16 +27,18 @@ import hashlib
 class run_machine():
     def __init__(self, params, feature_choices):
         print('sleeping')
-        sleep(randint(0,30))
+        print(params)
+        sleep(randint(10,60))
         print('starting')
         self.params  = params
-        starting_feature, n_subsets, n_components, lookback, with_rfc = self.params
+        starting_feature, n_subsets, n_components, lookback, with_rfc, include_covid = self.params
         self.starting_feature = starting_feature
         self.feature_choices = feature_choices
         self.n_subsets = n_subsets
         self.n_components = n_components
         self.lookback = lookback
         self.with_rfc = with_rfc
+        self.include_covid = include_covid
 
         self.features = [starting_feature]
         self.conn = sqlite3.connect('results.db')
@@ -96,6 +98,7 @@ class run_machine():
                             self.n_components, 
                             self.lookback, 
                             self.with_rfc, 
+                            self.include_covid,
                             name, )
                 job = q.enqueue(generate_model, args = job_args, job_timeout='12h',  result_ttl=86400 )
                 #TODO: change to nan and check for isnan in redis results
@@ -127,11 +130,13 @@ class run_machine():
                     continue
                 
                 # if backtest has already been completed, continue
-                
                 if self.results[self.results['feature_hash']==feature_hash]['sharpe_ratio'].values[0] != np.inf:
                     continue
-                
-                test_with_states, models_used, num_models_used = job.result
+                try:
+                    test_with_states, models_used, num_models_used = job.result
+                except Exception as e:
+                    print(e)
+                    continue
                 print('running backtest')
                 backtest_results = get_backtest(test_with_states, feature_hash, features, self.params, models_used, num_models_used, name=name, show_plot=False)
                 print(backtest_results)
@@ -182,15 +187,16 @@ if __name__ == '__main__':
     train.to_csv('./datasets/train.csv', index=False)
     test.to_csv('./datasets/test.csv', index=False)
     
-    feature_choices, top_starting_features = run_feature_importances(train, n_total_features=20)
+    feature_choices, top_starting_features = run_feature_importances(train, n_total_features=45)
     
     n_subsets = [3,5,10,15,20]
     # todo: test and work on n_components 3
     n_components = [4]
     lookback = [50,100,150,200]
     with_rfc = [True, False]
+    include_covid = [True, False]
 
-    params = list(product( top_starting_features, n_subsets, n_components, lookback, with_rfc ))
+    params = list(product( top_starting_features, n_subsets, n_components, lookback, with_rfc, include_covid ))
 
     shuffle(params)
     
@@ -201,7 +207,7 @@ if __name__ == '__main__':
     #params = ['mom', feature_choices, 5, 4, 200, True ]
     #run_machine( params )
 
-    p = Pool(8)
-    p.map(runner_method, params_with_features)
+    #p = Pool(4)
+    #p.map(runner_method, params_with_features)
 
-    #runner_method(params_with_features[0])
+    runner_method(params_with_features[0])

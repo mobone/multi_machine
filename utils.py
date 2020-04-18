@@ -68,7 +68,7 @@ def run_feature_importances(train, n_total_features=20):
 def get_backtest(test, feature_hash, features, params, models_used, num_models_used, name=None, show_plot=False):
     import dateutil.parser
 
-    starting_feature, n_subsets, n_components, lookback, with_rfc = params
+    starting_feature, n_subsets, n_components, lookback, with_rfc, include_covid = params
     
 
     symbols = ['SPY', 'SSO', 'UPRO']
@@ -107,6 +107,8 @@ def get_backtest(test, feature_hash, features, params, models_used, num_models_u
     backtest_results['n_subsets'] = n_subsets
     backtest_results['n_components'] = n_components
     backtest_results['lookback'] = lookback
+    backtest_results['with_rfc'] = with_rfc
+    backtest_results['include_covid'] = include_covid
     backtest_results['feature_hash'] = feature_hash
 
     return backtest_results
