@@ -47,7 +47,7 @@ def run_decision_tree(train):
     print('number of feature choices')
     print(len(feature_choices))
     
-    top_starting_features = list(df.sort_values(by='importances').tail(15)['feature'].values)[::-1]
+    top_starting_features = list(df.sort_values(by='importances').tail(10)['feature'].values)[::-1]
     return feature_choices, top_starting_features
 
 
@@ -120,7 +120,7 @@ def runner(params):
     features = [starting_feature]
     
 
-    while len(features)<16:
+    while len(features)<21:
         
         results_df = pd.DataFrame()
         
@@ -256,7 +256,7 @@ if __name__ == '__main__':
     
     
 
-    n_subsets = [5,10,15,20,25]
+    n_subsets = [3,5,10]
     n_components = [4]
     lookback = [50,100,150,200]
 

@@ -79,7 +79,7 @@ class AccuracyStrat(strategy.BacktestingStrategy):
             self.usage[self.__instrument_2] = .95
             self.usage[self.__instrument_3] = 0
 
-        elif state == 3:
+        elif state == 3 and self.__instrument_3 is not None:
             self.usage[self.__instrument_1] = 0
             self.usage[self.__instrument_2] = 0
             self.usage[self.__instrument_3] = .95
@@ -87,7 +87,8 @@ class AccuracyStrat(strategy.BacktestingStrategy):
         #bar = bars.getBar('QQQ')
         #print('bar', bar)
         for instrument in self.instruments:
-            
+            if instrument is None:
+                continue
             bar = bars.getBar(instrument)
             close = bar.getClose()
             
@@ -108,6 +109,8 @@ class AccuracyStrat(strategy.BacktestingStrategy):
                 self.marketOrder(instrument, num_shares, onClose=True)
         
         for instrument in self.instruments:
+            if instrument is None:
+                continue
             bar = bars.getBar(instrument)
             close = bar.getClose()
             
@@ -126,7 +129,7 @@ class AccuracyStrat(strategy.BacktestingStrategy):
                 self.marketOrder(instrument, num_shares, onClose=True)
 
 
-def setup_strategy(files, name, show_plot=False):
+def setup_strategy(files, symbols, name, show_plot=False):
     #from pyalgotrade.feed import csvfeed, yahoofeed
 
     # Load the bar feed from the CSV file
@@ -146,7 +149,10 @@ def setup_strategy(files, name, show_plot=False):
     
     instrument_1 = files[0][0]
     instrument_2 = files[1][0]
-    instrument_3 = files[2][0]
+    if len(files)==3:
+        instrument_3 = files[2][0]
+    else:
+        instrument_3 = None
     states_instrument = 'states'
     
     #print('got these instruments', instrument_1, instrument_2, instrument_3, states_instrument)
