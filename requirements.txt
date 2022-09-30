@@ -2,7 +2,7 @@ numpy==1.18.2
 requests==2.23.0
 alpaca_trade_api==0.46
 hmmlearn==0.2.3
-joblib==0.14.1
+joblib==1.2.0
 matplotlib==3.2.1
 mlxtend==0.17.2
 mongo_memoize==0.0.4
